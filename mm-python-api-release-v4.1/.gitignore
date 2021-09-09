@@ -1,0 +1,6 @@
+#Ignore python compiled files
+*.pyc
+../.idea
+../.DS_Store
+/examples/MachineMotion.pyc
+/examples/__pycache__
