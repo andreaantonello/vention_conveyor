@@ -8,35 +8,37 @@ from MachineMotion import *
 
 sys.path.append("../..")
 
-N_PODS = 2
+N_PODS = 3
 TOTAL_AXES_MM = 3
 
 # Configuration mapping - example for 2 pods
 # IO number are zero indexed in this mapping
 ip_address = ['192.168.7.5', '192.168.7.4']
+dir_mapper = {'forward': -1, 'back': -1}
 
-sensor = {'forward': ['mm1_io1_pin0', 'mm1_io2_pin0'],
-          'back': ['mm1_io1_pin1', 'mm1_io2_pin1']}
+sensor = {'forward': ['mm1_io1_pin0', 'mm1_io2_pin0', 'mm1_io3_pin0'],
+          'back': ['mm1_io1_pin1', 'mm1_io2_pin1', 'mm1_io3_pin1']}
 
-gate = {'forward': ['mm1_io1_pin01', 'mm1_io2_pin01'],
-        'back': ['mm1_io1_pin23', 'mm1_io2_pin23']}
+gate = {'forward': ['mm1_io1_pin01', 'mm1_io2_pin01', 'mm1_io3_pin01'],
+        'back': ['mm1_io1_pin23', 'mm1_io2_pin23', 'mm1_io3_pin23']}
 
-servo = {'forward': ['mm1_drive2', 'mm2_drive1'],
-         'back': ['mm1_drive1', 'mm1_drive3']}
+servo = {'forward': ['mm1_drive2', 'mm2_drive1', 'mm2_drive3'],
+         'back': ['mm1_drive1', 'mm1_drive3', 'mm2_drive2']}
 
 # Kinematics parameters
-CRUISE_SPEED = 500
-CRUISE_ACC = 500
-FINE_SPEED = 50
-FINE_ACC = 500
-STOP_ACC = 500
+CRUISE_SPEED = 600
+CRUISE_ACC = 10000
+FINE_SPEED = 200
+FINE_ACC = 10000
+STOP_ACC = 1000
 
 
 class ConveyorMotion:
     def __init__(self):
         self.mmList = []
         self.initialise_machine_motion()
-        # self.release_estop()
+        self.stop_all_conveyors()
+        self.release_estop()
 
     def cleanup(self, *args):
         for pod in range(N_PODS):
@@ -45,13 +47,11 @@ class ConveyorMotion:
         print('Exiting, stopping conveyor')
         sys.exit(0)
 
-
     def stop_all_conveyors(self):
         for pod in range(N_PODS):
             for direction in ['forward', 'back']:
                 self.stop_conveyor(pod + 1, direction)
         print('Exiting, stopping conveyor')
-        sys.exit(0)
 
     def initialise_machine_motion(self):
         # Create Machine Motion instance
@@ -80,6 +80,7 @@ class ConveyorMotion:
         """
         self.check_pod_number_validity(pod)
 
+        # self.check_pod_number_validity(pod)
         label = sensor[direction][pod - 1]  # Extract mapping
         label_ids = [int(s) for s in label if s.isdigit()]
 
@@ -87,11 +88,15 @@ class ConveyorMotion:
         self.check_machine_number_validity(label_ids[0] - 1)
         self.check_input_number_validity(label_ids[1])
 
-        # deviceNetworkId is not zero indexed, allowed values are [1, 2, 3]
-        # pin is zero indexed, allowed values are [0, 1, 2, 3]
-        pin_value = self.mmList[label_ids[0] - 1].digitalRead(deviceNetworkId=label_ids[1],
-                                                              pin=label_ids[2])
-        return pin_value
+        # Detect all connected digital IO Modules
+        detected_io_modules = self.mmList[label_ids[0] - 1].detectIOModules()
+
+        # Toggles the output pins
+        if detected_io_modules is not None:
+            pin_value = self.mmList[label_ids[0] - 1].digitalRead(deviceNetworkId=label_ids[1],
+                                                                  pin=label_ids[2])
+
+            return pin_value
 
     def close_gate(self, pod, direction, action):
         """
@@ -100,7 +105,7 @@ class ConveyorMotion:
         :param action: string, ['open', 'close']
         :return:
         """
-        self.check_pod_number_validity(pod)
+        # self.check_pod_number_validity(pod)
         label = gate[direction][pod - 1]  # Extract mapping
         label_ids = [int(s) for s in label if s.isdigit()]
 
@@ -115,14 +120,17 @@ class ConveyorMotion:
         # Toggles the output pins
         if detected_io_modules is not None:
             if action == 'close':
-                self.mmList[label_ids[0] - 1].digitalWrite(deviceNetworkId=int(label_ids[1]), pin=label_ids[2], value=1)
-                self.mmList[label_ids[0] - 1].digitalWrite(deviceNetworkId=int(label_ids[1]), pin=label_ids[3], value=0)
-            elif action == 'open':
                 self.mmList[label_ids[0] - 1].digitalWrite(deviceNetworkId=int(label_ids[1]), pin=label_ids[2], value=0)
+                time.sleep(0.1)
                 self.mmList[label_ids[0] - 1].digitalWrite(deviceNetworkId=int(label_ids[1]), pin=label_ids[3], value=1)
+            elif action == 'open':
+                self.mmList[label_ids[0] - 1].digitalWrite(deviceNetworkId=int(label_ids[1]), pin=label_ids[2], value=1)
+                time.sleep(0.1)
+                self.mmList[label_ids[0] - 1].digitalWrite(deviceNetworkId=int(label_ids[1]), pin=label_ids[3], value=0)
             else:
                 print('Action unknown')
                 exit(1)
+        time.sleep(0.1)
 
     def move_conveyor(self, pod, direction, duration=None, speed=CRUISE_SPEED, acc=CRUISE_ACC):
         """
@@ -143,22 +151,22 @@ class ConveyorMotion:
         self.check_axis_number_validity(label_ids[1])
 
         # Move conveyor
-        self.mmList[label_ids[0] - 1].setContinuousMove(label_ids[1], speed, acc)
-        if duration is not None:
-            try:
-                duration = int(duration)
-                time.sleep(duration)
-                # Stop conveyor
-                self.mmList[label_ids[0] - 1].stopContinuousMove(label_ids[1], acc)
-            except ValueError:
-                try:
-                    # Convert it into float
-                    duration = float(duration)
-                    time.sleep(duration)
-                    # Stop conveyor
-                    self.mmList[label_ids[0] - 1].stopContinuousMove(label_ids[1], acc)
-                except ValueError:
-                    print("Duration input is not a number.")
+        self.mmList[label_ids[0] - 1].setContinuousMove(label_ids[1], dir_mapper[direction]*speed, acc)
+        # if duration is not None:
+        #     try:
+        #         duration = int(duration)
+        #         time.sleep(duration)
+        #         # Stop conveyor
+        #         self.mmList[label_ids[0] - 1].stopContinuousMove(label_ids[1], acc)
+        #     except ValueError:
+        #         try:
+        #             # Convert it into float
+        #             duration = float(duration)
+        #             time.sleep(duration)
+        #             # Stop conveyor
+        #             self.mmList[label_ids[0] - 1].stopContinuousMove(label_ids[1], acc)
+        #         except ValueError:
+        #             print("Duration input is not a number.")
 
     def stop_conveyor(self, pod, direction, acc=STOP_ACC):
         """
@@ -221,8 +229,9 @@ class ConveyorMotion:
         :param action: string, ['open', 'close']
         :return:
         """
-        for pod in range(N_PODS):
-            for direction in ['forward', 'back']:
+        for pod in range(0, N_PODS):
+            for direction in ['back', 'forward']:
+                print('moving pod', pod + 1, 'direction', direction, 'action', action)
                 self.close_gate(pod + 1, direction, action)
 
     def move_between_pods(self, pod_initial, pod_final):
@@ -239,7 +248,7 @@ class ConveyorMotion:
         direction = 'forward' if pod_final > pod_initial else 'back'
 
         # Close all gates
-        self.move_all_gates('open')
+        self.move_all_gates('close')
 
         # Open gates for movement
         for pod in range(pod_list[0], pod_list[1] + 1):
@@ -252,27 +261,19 @@ class ConveyorMotion:
         # Listen for sensor
         while True:
             value = self.read_sensor(pod=pod_final, direction=direction)
-            if value:
-                for pod in range(pod_list[0], pod_list[1] + 1):
-                    self.stop_conveyor(pod=pod, direction=direction)
+            if not value:
+                print('Found obstacle')
                 break
-        time.sleep(2)
-        self.move_conveyor(pod=pod_final, direction=direction, speed=FINE_SPEED, acc=FINE_ACC, duration=5)
 
+        # Close final gates
+        self.close_gate(pod=pod_final, direction=direction, action='close')
+        self.move_conveyor(pod=pod_final, direction=direction, speed=FINE_SPEED, acc=FINE_ACC, duration=5)
+        for pod in range(pod_list[0], pod_list[1] + 1):
+            self.move_conveyor(pod=pod, direction=direction, speed=FINE_SPEED, acc=FINE_ACC, duration=5)
+        time.sleep(3)
+        for pod in range(pod_list[0], pod_list[1] + 1):
+            self.stop_conveyor(pod=pod, direction=direction)
 
 
 conveyor = ConveyorMotion()
-
-# conveyor.stop_all_conveyors()
-conveyor.move_between_pods(1, 2)
-signal.signal(signal.SIGINT, conveyor.cleanup)
-signal.signal(signal.SIGTERM, conveyor.cleanup)
-exit()
-
-conveyor.move_all_gates('close')
-conveyor.close_gate(pod=2, direction='forward', action='close')
-
-conveyor.move_conveyor(pod=1, duration=0.5, direction='back')
-conveyor.move_conveyor(pod=1, duration=0.5, direction='forward')
-conveyor.move_conveyor(pod=2, duration=0.5, direction='back')
-conveyor.move_conveyor(pod=2, duration=0.5, direction='forward')
+conveyor.move_between_pods(3, 1)
